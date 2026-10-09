@@ -2,6 +2,7 @@ import urllib.request
 from urllib.parse import quote, unquote
 import re
 import os
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 import opencc
 
@@ -19,8 +20,8 @@ URL_FETCH_TIMEOUT = 10
 # 白名单测速阈值(ms)
 RESPONSE_TIME_THRESHOLD = 2000
 # M3U相关配置
-TVG_URL = "https://ghfast.top/https://github.com/CCSH/IPTV/raw/refs/heads/main/e.xml.gz"
-LOGO_URL_TPL = "https://ghfast.top/https://raw.githubusercontent.com/CCSH/IPTV/refs/heads/main/logo/{}.png"
+TVG_URL = "https://ghfast.top/https://github.com/shawnXmoment/IPTV/raw/refs/heads/main/e.xml.gz"
+LOGO_URL_TPL = "https://ghfast.top/https://raw.githubusercontent.com/shawnXmoment/IPTV/refs/heads/main/logo/{}.png"
 # 所有单个频道最多保留的有效源数量，可直接修改数字（-1=无限制）
 SINGLE_CHANNEL_MAX_COUNT = 20  
 
@@ -66,6 +67,19 @@ def write_txt(file_path: str, data: list or str) -> None:
         print(f"[SUCCESS] 文件写入成功: {os.path.basename(file_path)}")
     except Exception as e:
         print(f"[ERROR] 写入文件 {file_path} 失败: {str(e)}")
+
+def load_epg_channel_ids(epg_file: str) -> dict:
+    channel_ids = {}
+    try:
+        root = ET.parse(epg_file).getroot()
+        for channel in root.findall("channel"):
+            channel_id = channel.get("id", "").strip()
+            for name in channel.findall("display-name"):
+                if name.text and name.text.strip():
+                    channel_ids[name.text.strip()] = channel_id
+    except (FileNotFoundError, ET.ParseError, OSError) as e:
+        print(f"[WARNING] 读取EPG频道ID失败: {str(e)}")
+    return channel_ids
 
 def safe_quote_url(url: str) -> str:
     try:
@@ -379,13 +393,14 @@ def generate_live_text(classifier: ChannelClassifier, main_dict: dict) -> tuple[
 
     return full_lines, lite_lines
 
-def make_m3u(txt_file: str, m3u_file: str, tvg_url: str, logo_tpl: str):
+def make_m3u(txt_file: str, m3u_file: str, tvg_url: str, logo_tpl: str, epg_file: str = "e.xml"):
     try:
         if not os.path.exists(txt_file):
             print(f"[ERROR] M3U源文件不存在: {txt_file}")
             return
         m3u_content = f"#EXTM3U x-tvg-url=\"{tvg_url}\"\n"
         lines = read_txt(txt_file, strip=True, skip_empty=True)
+        epg_channel_ids = load_epg_channel_ids(epg_file)
         group_name = ""
         for line in lines:
             if "," not in line:
@@ -400,8 +415,9 @@ def make_m3u(txt_file: str, m3u_file: str, tvg_url: str, logo_tpl: str):
             if not channel_url or "://" not in channel_url:
                 continue
             logo_url = logo_tpl.format(channel_name)
+            tvg_id = epg_channel_ids.get(channel_name, channel_name)
             m3u_content += (
-                f"#EXTINF:-1  tvg-name=\"{channel_name}\" tvg-logo=\"{logo_url}\"  group-title=\"{group_name}\",{channel_name}\n"
+                f"#EXTINF:-1  tvg-id=\"{tvg_id}\" tvg-name=\"{channel_name}\" tvg-logo=\"{logo_url}\"  group-title=\"{group_name}\",{channel_name}\n"
                 f"{channel_url}\n"
             )
         write_txt(m3u_file, m3u_content)
